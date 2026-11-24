@@ -192,6 +192,69 @@ For playback in a custom scene, use `scripts/reinforcement_learning/rsl_rl/play_
 
 ## Add a robot or task
 
+### ICE Robocon
+
+The laboratory wheel-leg robot is packaged under
+`source/robot_lab/robot_lab/assets/data/Robots/ice/robocon/`. Its Flat and Rough tasks
+are registered as `RobotLab-Isaac-Velocity-{Flat,Rough}-ICE-Robocon-v0`, with separate
+RSL-RL experiments `ice_robocon_flat` and `ice_robocon_rough`. Start on flat ground:
+
+```bash
+uv sync --locked --extra importers
+uv run --extra importers isaaclab train --rl_library rsl_rl --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --num_envs 1024 --viz none physics=newton_mjwarp
+```
+
+For a server, place the same Isaac Lab v3.0.0 checkout next to `robot_lab`, as described
+in Installation. Use `--num_envs 256` on a smaller GPU and increase it with available
+memory. Preview a checkpoint with:
+
+```bash
+uv run --extra importers isaaclab play --rl_library rsl_rl --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --checkpoint latest --num_envs 4 --viz newton_gl physics=newton_mjwarp
+```
+
+The prepared URDF preserves the supplied CAD geometry, 23.47056 kg total mass,
+inertias, link names and joint axes. Its original leg limits were all zero and its
+wheel effort/speed limits were missing. The prepared copy supplies provisional
+simulation limits, resolves the mesh package as `robocon`, names empty materials,
+and replaces wheel collision meshes with smooth cylinders of radius 0.088 m and
+width 0.030 m. The original uploaded export is left untouched.
+
+Legs use Unitree IM6014 and wheels use GO-M8010-6. Their actuator and prepared URDF
+limits use the following manufacturer output-side reference values, assuming no
+additional external transmission:
+
+| Actuator group | Motor | Reference voltage | Peak torque (N m) | Speed bound (rad/s) |
+|----------------|-------|-------------------|-------------------|---------------------|
+| Legs | IM6014 (N6014B-12.6) | 60 V | 31.7 | 54.2 (no load) |
+| Wheels | GO-M8010-6 | 24 V | 23.7 | 30.0 |
+
+References: [IM6014 specifications](https://www.unitree.com/mobile/IM6014/),
+[GO-M8010-6 specifications](https://www.unitree.com/mobile/go1/motor/).
+These peak/no-load bounds are a simulation approximation; the implicit PD actuators
+do not model a measured torque-speed envelope, continuous thermal ratings or voltage
+changes. Actual supply voltages and any external transmission remain to be confirmed.
+Internal motor reduction is already included in these output-side specifications.
+Motor limits, PD gains and the default stance are centralized in
+`source/robot_lab/robot_lab/assets/ice.py`. Legs use position control (Kp 60, Kd 2),
+and wheels use velocity control (Kp 0, Kd 0.5). The reference pose is:
+
+| Joint group | Left (rad) | Right (rad) |
+|-------------|------------|-------------|
+| Hip         | 0.0        | 0.0         |
+| Thigh       | 0.2        | -0.2        |
+| Calf        | -0.4       | 0.4         |
+| Wheel       | 0.0        | 0.0         |
+
+This pose is derived from the CAD link frames, with `base_link` initially 0.42 m
+above ground; it is not a measured hardware calibration. Left/right wheel action
+signs follow the opposite URDF axes. Tasks start upright, bound action targets,
+penalize loss of height/orientation, and terminate falls. Confirm the actual motor,
+transmission, supply voltage, mechanical limits and encoder-to-URDF calibration
+before using trained policies on hardware. Short training verifies the pipeline,
+not policy convergence.
+
+### Other robots and tasks
+
 Tasks follow the Gymnasium API. Common velocity configuration and MDP terms belong to the task
 family; robot-specific scenes, registrations and agent configurations belong to `config`:
 
