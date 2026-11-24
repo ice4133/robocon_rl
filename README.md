@@ -212,6 +212,21 @@ memory. Preview a checkpoint with:
 uv run --extra importers isaaclab play --rl_library rsl_rl --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --checkpoint latest --num_envs 4 --viz newton_gl physics=newton_mjwarp
 ```
 
+For interactive single-robot evaluation in the Newton window:
+
+```bash
+.venv/bin/python scripts/reinforcement_learning/rsl_rl/play.py --keyboard --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --checkpoint latest --num_envs 1 --viz newton_gl physics=newton_mjwarp
+```
+
+Click the viewer and hold **I/K** to move forward/backward, **J/L** to turn
+left/right, or **U/O** to move sideways. Releasing the keys commands zero velocity;
+**X** also commands zero velocity while held. **B** resets the robot. The policy
+still controls all joints and wheels. The camera follows the robot, and the terminal
+prints commanded versus measured body velocities once per second. Defaults are
+0.5 m/s forward/backward, 0.2 m/s sideways, and 0.6 rad/s turning; adjust with
+`--speed`, `--strafe-speed`, and `--turn-speed`. Use `--no-follow-camera` for a free
+camera, and Ctrl+C to exit.
+
 The prepared URDF preserves the supplied CAD geometry, 23.47056 kg total mass,
 inertias, link names and joint axes. Its original leg limits were all zero and its
 wheel effort/speed limits were missing. The prepared copy supplies provisional

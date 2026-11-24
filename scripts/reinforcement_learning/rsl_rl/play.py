@@ -5,6 +5,7 @@
 
 Run with --help for current CLI flags. Use --checkpoint for resume/play and
 --headless --viz none for simulation without a viewer.
+Use --keyboard --num_envs 1 --viz newton_gl for interactive velocity control.
 """
 
 import sys
@@ -26,6 +27,11 @@ def main(argv: list[str] | None = None) -> int:
         args.remove("--headless")
         if not any(arg in ("--viz", "--visualizer") or arg.startswith(("--viz=", "--visualizer=")) for arg in args):
             args.extend(["--viz", "none"])
+    if "--keyboard" in args:
+        from keyboard_play import run
+
+        args.remove("--keyboard")
+        return run(args)
     return run_play_cli(["--rl_library", "rsl_rl", *args])
 
 
