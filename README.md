@@ -204,6 +204,16 @@ uv sync --locked --extra importers
 uv run --extra importers isaaclab train --rl_library rsl_rl --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --num_envs 1024 --viz none physics=newton_mjwarp
 ```
 
+The Flat task trains forward/reverse commands up to 2.0 m/s, with lateral commands
+up to 0.3 m/s and yaw commands up to 0.8 rad/s. To favor slower lateral steps,
+landing rewards penalize swings shorter than 0.30 s and cap credited swing time
+at 0.50 s, only when the lateral command exceeds 0.10 m/s in magnitude. Hip action
+scale is 0.18 (previously 0.125); action-rate and leg-acceleration penalties are
+three times stronger. These are training incentives, not a fixed gait frequency
+or step length. Joint position, torque and speed limits remain the same.
+Start a new training run with the command above to learn the revised action scale
+and rewards; existing checkpoints retain their learned behavior.
+
 For a server, place the same Isaac Lab v3.0.0 checkout next to `robot_lab`, as described
 in Installation. Use `--num_envs 256` on a smaller GPU and increase it with available
 memory. Preview a checkpoint with:
@@ -226,6 +236,14 @@ prints commanded versus measured body velocities once per second. Defaults are
 0.5 m/s forward/backward, 0.2 m/s sideways, and 0.6 rad/s turning; adjust with
 `--speed`, `--strafe-speed`, and `--turn-speed`. Use `--no-follow-camera` for a free
 camera, and Ctrl+C to exit.
+
+The Newton window also shows a **Velocity tracking** panel with Target, Actual,
+and signed Delta (`Actual - Target`) for forward/reverse speed `vx`, lateral speed
+`vy` (both m/s), and turning rate `wz` (rad/s). Measurements use the robot's body
+frame, so turning does not change the meaning of forward or sideways. Enable
+**Show last 5 seconds** to overlay target and actual traces for each axis. History
+clears on robot reset. Positive values mean forward, left, and left turn;
+negative values mean reverse, right, and right turn.
 
 The prepared URDF preserves the supplied CAD geometry, 23.47056 kg total mass,
 inertias, link names and joint axes. Its original leg limits were all zero and its

@@ -26,4 +26,18 @@ class IceRoboconFlatEnvCfg(IceRoboconRoughEnvCfg):
         self.curriculum.terrain_levels = None
         self.terminations.fallen = DoneTerm(func=mdp.root_height_below_minimum, params={"minimum_height": 0.18})
 
+        self.commands.base_velocity.ranges.lin_vel_x = (-2.0, 2.0)
+        # Keep lateral speed and yaw ranges; change the stepping style, not the requested strafe speed.
+        self.actions.joint_pos.scale = {".*_hip_joint": 0.18, "^(?!.*_hip_joint).*": 0.25}
+        self.rewards.action_rate_l2.weight = -0.03
+        self.rewards.joint_acc_l2.weight = -7.5e-7
+        # Give lateral swings time to cover more ground, without inducing hopping when rolling straight.
+        self.rewards.feet_air_time.func = mdp.lateral_feet_air_time
+        self.rewards.feet_air_time.weight = 0.5
+        self.rewards.feet_air_time.params.update(
+            threshold=0.30,
+            max_air_time=0.50,
+            command_threshold=0.10,
+        )
+
         self.disable_zero_weight_rewards()

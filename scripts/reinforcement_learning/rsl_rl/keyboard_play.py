@@ -11,6 +11,7 @@ import os
 import time
 
 import torch
+from velocity_panel import VelocityTrackingPanel
 
 from isaaclab.app import add_launcher_args, launch_simulation
 from isaaclab.envs.mdp.commands import UniformVelocityCommand
@@ -156,6 +157,11 @@ def run(argv: list[str]) -> int:
         policy = runner.get_inference_policy(device=base.device)
         obs = env.get_observations()
         command = base.command_manager.get_term("base_velocity")
+        velocity_panel = VelocityTrackingPanel()
+        for visualizer in base.sim.visualizers:
+            register_ui = getattr(visualizer, "register_ui_callback", None)
+            if callable(register_ui):
+                register_ui(velocity_panel.draw, position="free")
         reset_held = False
         limits = [limit for limit in (args.max_steps, video_playback_steps(args, env_cfg)) if limit is not None]
         max_steps = min(limits) if limits else None
@@ -169,9 +175,22 @@ def run(argv: list[str]) -> int:
                 if reset_now and not reset_held:
                     obs, _ = env.reset()
                     policy.reset(torch.ones(1, dtype=torch.long, device=base.device))
+                    velocity_panel.reset()
                 reset_held = reset_now
                 obs, _, dones, _ = env.step(policy(obs))
                 policy.reset(dones)
+                if dones.any():
+                    velocity_panel.reset()
+                robot = base.scene["robot"].data
+                # Copy one six-value sample to the CPU for both the panel and terminal.
+                velocities = (
+                    torch.cat(
+                        (command.command[0], robot.root_lin_vel_b.torch[0, :2], robot.root_ang_vel_b.torch[0, 2:3])
+                    )
+                    .cpu()
+                    .tolist()
+                )
+                velocity_panel.update(velocities[:3], velocities[3:], base.step_dt)
                 step_count += 1
                 if not args.no_follow_camera:
                     position = base.scene["robot"].data.root_pos_w.torch[0].cpu().tolist()
@@ -179,13 +198,11 @@ def run(argv: list[str]) -> int:
                         eye=(position[0] + 2.5, position[1] + 2.5, position[2] + 1.8), target=position
                     )
                 if step_count % max(1, round(1.0 / base.step_dt)) == 0:
-                    robot = base.scene["robot"].data
-                    target = command.command[0].cpu().tolist()
-                    linear = robot.root_lin_vel_b.torch[0].cpu().tolist()
-                    yaw = robot.root_ang_vel_b.torch[0, 2].item()
+                    target = velocity_panel.target
+                    actual = velocity_panel.actual
                     print(
                         f"[Velocity] target vx/vy/wz={target[0]:+.2f}/{target[1]:+.2f}/{target[2]:+.2f} | "
-                        f"actual={linear[0]:+.2f}/{linear[1]:+.2f}/{yaw:+.2f}"
+                        f"actual={actual[0]:+.2f}/{actual[1]:+.2f}/{actual[2]:+.2f}"
                     )
                 if dones.any():
                     print("[INFO] Robot reset after termination (fall/contact/orientation).")

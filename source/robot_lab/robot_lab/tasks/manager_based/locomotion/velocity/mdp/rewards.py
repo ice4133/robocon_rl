@@ -373,6 +373,29 @@ def feet_air_time(
     return reward
 
 
+def lateral_feet_air_time(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    sensor_cfg: SceneEntityCfg,
+    threshold: float,
+    max_air_time: float,
+    command_threshold: float,
+) -> torch.Tensor:
+    """Favor longer, fewer swings during strafing, without rewarding forward-only hopping.
+
+    Score each swing only on landing. Cap the credited air time so prolonged flight
+    cannot keep increasing the reward. This biases swing duration; it does not
+    prescribe a full gait period or a lateral foot displacement.
+    """
+    contact_sensor: ContactSensor = env.scene.sensors[sensor_cfg.name]
+    first_contact = contact_sensor.compute_first_contact(env.step_dt).torch[:, sensor_cfg.body_ids]
+    last_air_time = contact_sensor.data.last_air_time.torch[:, sensor_cfg.body_ids]
+    reward = torch.sum((last_air_time.clamp(max=max_air_time) - threshold) * first_contact, dim=1)
+    reward *= env.command_manager.get_command(command_name)[:, 1].abs() > command_threshold
+    reward *= torch.clamp(-env.scene["robot"].data.projected_gravity_b.torch[:, 2], 0, 0.7) / 0.7
+    return reward
+
+
 def feet_air_time_positive_biped(env, command_name: str, threshold: float, sensor_cfg: SceneEntityCfg) -> torch.Tensor:
     """Reward long steps taken by the feet for bipeds.
 
