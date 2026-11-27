@@ -3,18 +3,47 @@
 
 """Robocon wheel-leg velocity tracking, using the Go2W task's MDP terms."""
 
+from isaaclab.managers import RewardTermCfg as RewTerm
+from isaaclab.managers import SceneEntityCfg
 from isaaclab.managers import TerminationTermCfg as DoneTerm
 from isaaclab.utils import configclass, replace
 
 from robot_lab.assets.ice import ICE_ROBOCON_CFG
 from robot_lab.tasks.manager_based.locomotion.velocity import mdp
 from robot_lab.tasks.manager_based.locomotion.velocity.config.wheeled.unitree_go2w.rough_env_cfg import (
+    UnitreeGo2WRewardsCfg,
     UnitreeGo2WRoughEnvCfg,
 )
 
 
 @configclass
+class IceRoboconRewardsCfg(UnitreeGo2WRewardsCfg):
+    """Optional stopping costs, disabled for the balanced-command baseline."""
+
+    stand_base_motion = RewTerm(
+        func=mdp.stand_base_motion_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity", "yaw_weight": 0.25, "command_threshold": 1.0e-6},
+    )
+    stand_wheel_velocity = RewTerm(
+        func=mdp.stand_wheel_velocity_l2,
+        weight=0.0,
+        params={
+            "command_name": "base_velocity",
+            "asset_cfg": SceneEntityCfg("robot", joint_names=".*_foot_joint"),
+            "command_threshold": 1.0e-6,
+        },
+    )
+    stand_wheel_action = RewTerm(
+        func=mdp.stand_wheel_action_l2,
+        weight=0.0,
+        params={"command_name": "base_velocity", "action_name": "joint_vel", "command_threshold": 1.0e-6},
+    )
+
+
+@configclass
 class IceRoboconRoughEnvCfg(UnitreeGo2WRoughEnvCfg):
+    rewards: IceRoboconRewardsCfg = IceRoboconRewardsCfg()
     base_link_name = "base_link"
     foot_link_name = ".*_foot_link"
 
@@ -96,7 +125,10 @@ class IceRoboconRoughEnvCfg(UnitreeGo2WRoughEnvCfg):
         self.commands.base_velocity.ranges.lin_vel_x = (-0.8, 0.8)
         self.commands.base_velocity.ranges.lin_vel_y = (-0.3, 0.3)
         self.commands.base_velocity.ranges.ang_vel_z = (-0.8, 0.8)
-        self.commands.base_velocity.rel_standing_envs = 0.1
+        # Resample stand/move for each environment during an episode, so the
+        # policy learns to brake after driving instead of only standing at reset.
+        self.commands.base_velocity.rel_standing_envs = 0.25
+        self.commands.base_velocity.resampling_time_range = (3.0, 6.0)
 
         self.rewards.flat_orientation_l2.weight = -1.0
         self.rewards.base_height_l2.weight = -5.0

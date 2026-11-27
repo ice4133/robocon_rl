@@ -111,6 +111,56 @@ def stand_still(
     return reward
 
 
+def _stationary_command_mask(env: ManagerBasedRLEnv, command_name: str, command_threshold: float) -> torch.Tensor:
+    """Gate stopping costs on the command, even while the robot is still moving."""
+    return torch.linalg.vector_norm(env.command_manager.get_command(command_name), dim=1) <= command_threshold
+
+
+def stand_base_motion_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg = SceneEntityCfg("robot"),
+    yaw_weight: float = 0.25,
+    command_threshold: float = 1.0e-6,
+) -> torch.Tensor:
+    """Penalize planar base motion and yaw under a zero command; use a negative weight.
+
+    Vertical/roll/pitch adjustments remain available for balance. Do not gate on
+    actual speed: the same cost must brake a moving robot after a stop command.
+    """
+    data = env.scene[asset_cfg.name].data
+    cost = data.root_link_lin_vel_b.torch[:, :2].square().sum(dim=1)
+    cost += yaw_weight * data.root_link_ang_vel_b.torch[:, 2].square()
+    return cost * _stationary_command_mask(env, command_name, command_threshold)
+
+
+def stand_wheel_velocity_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    asset_cfg: SceneEntityCfg,
+    command_threshold: float = 1.0e-6,
+) -> torch.Tensor:
+    """Penalize actual wheel rotation, including airborne wheels, only when stopping."""
+    velocity = env.scene[asset_cfg.name].data.joint_vel.torch[:, asset_cfg.joint_ids]
+    return velocity.square().mean(dim=1) * _stationary_command_mask(env, command_name, command_threshold)
+
+
+def stand_wheel_action_l2(
+    env: ManagerBasedRLEnv,
+    command_name: str,
+    action_name: str = "joint_vel",
+    command_threshold: float = 1.0e-6,
+) -> torch.Tensor:
+    """Penalize raw wheel commands at rest, discouraging opposing motor targets.
+
+    Use the velocity action term rather than assuming that wheel actions or
+    articulation DOFs occupy the final four indices. Using raw actions also
+    discourages arbitrarily large outputs beyond the target clipping limits.
+    """
+    action = env.action_manager.get_term(action_name).raw_actions
+    return action.square().mean(dim=1) * _stationary_command_mask(env, command_name, command_threshold)
+
+
 def joint_pos_penalty(
     env: ManagerBasedRLEnv,
     command_name: str,

@@ -194,6 +194,112 @@ For playback in a custom scene, use `scripts/reinforcement_learning/rsl_rl/play_
 
 ### ICE Robocon
 
+The current straightness refinement starts from the best tracking checkpoint
+`ice_robocon_smooth_from4999/2026-11-27_20-15-53_target_smooth_airspin_s42/model_7998.pt`:
+
+```bash
+cd /home/jasper/robot_lab
+.venv/bin/python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-Smooth-Straight-v0 \
+  --num_envs 1024 --viz none --max_iterations 2000 \
+  --checkpoint /home/jasper/robot_lab/logs/rsl_rl/ice_robocon_smooth_from4999/2026-11-27_20-15-53_target_smooth_airspin_s42/model_7998.pt \
+  --no-resume_optimizer_state \
+  --experiment_name ice_robocon_smooth_straight_from7998 \
+  --run_name straight_s42 --seed 42 \
+  physics=newton_mjwarp
+```
+
+The 2000 iterations are additional fine-tuning, with a fresh optimizer, fixed
+learning rate 3e-5, entropy coefficient 0.001 and PPO clip 0.1. The previous Smooth
+task is retained unchanged as a control. The refinement adds exactly one active
+term (21 total), `straight_rolling`, at weight -0.2:
+
+- Only pure forward/reverse commands with abs(vx)>0.05 and abs(vy),abs(wz)<=1e-6
+  activate it. Lateral, yaw and mixed commands, including small nonzero yaw, are
+  exempt.
+- Wheel directions (-1,+1,-1,+1) match the URDF. Signed wheel surface speeds must
+  agree with measured body vx (scale 0.25 m/s), independently of command-ramp lag.
+- Body lateral speed (scale 0.10 m/s) and yaw rate (scale 0.05 rad/s) are penalized
+  during straight rolling. These are normalization scales, not acceptance limits.
+- Leg velocity beyond 0.05 rad/s is penalized with scale 0.5 rad/s; half the
+  per-leg mean and half the worst-leg cost prevent a single restless leg from
+  disappearing in a twelve-joint average. This treats every leg equally.
+
+The existing target-curvature cost changes from -0.01 to -0.02. All other reward
+weights, action scaling, joint/motor limits, 57-input/16-output policy structure,
+and command ranges stay as in Smooth. Modes stand/forward/lateral/yaw/mixed are
+5/35/25/15/20%; targets last 8–12 s, with 10% of forward/reverse samples in the
+1.75–2 m/s magnitude band, covering both signs. Low-speed sampling remains 20%.
+The sustained-airborne spin cost and existing lateral air-time reward remain on.
+
+This addresses observed FL leg motion and rolling mismatch: in the previous
+-2 m/s replay, FL leg velocity RMS was about 0.20 rad/s versus 0.02–0.03 in the
+other legs; the FL rolling speed was about -1.24 m/s versus -1.94 in the body.
+Mean body-frame velocity alone missed accumulated heading error. The companion
+`rl_sar/scripts/check_ice_straight.py` measures native qpos trajectories relative
+to the initial heading, for forward and reverse. Its initial acceptance limits
+are 2 degrees maximum heading change and 0.10 m maximum cross-track deviation
+over a 14 s command rollout. Existing 7998 fails these stricter path checks.
+The reward is a soft constraint, not a deployment heading-lock controller;
+the new checkpoint must demonstrate straightness and retain lateral/yaw/mixed
+tracking before acceptance. Existing policies are not altered by this source edit.
+
+The current smoothness experiment fine-tunes the selected original checkpoint
+`ice_robocon_flat/2026-11-24_23-11-40/model_4999.pt`. Use the dedicated **Smooth**
+task below; the older native-only coordination tasks remain available as controls.
+
+```bash
+cd /home/jasper/robot_lab
+.venv/bin/python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-Smooth-v0 \
+  --num_envs 1024 --viz none --max_iterations 3000 \
+  --checkpoint /home/jasper/robot_lab/logs/rsl_rl/ice_robocon_flat/2026-11-24_23-11-40/model_4999.pt \
+  --no-resume_optimizer_state \
+  --experiment_name ice_robocon_smooth_from4999 \
+  --run_name target_smooth_airspin_s42 --seed 42 \
+  physics=newton_mjwarp
+```
+
+This loads the original actor/critic and starts a fresh optimizer for the changed
+objective. The 3000 iterations are **additional** training; the iteration counter
+starts at the checkpoint's 4999. A fixed learning rate of 5e-5 prevents adaptive
+learning-rate growth, PPO clip is 0.1, entropy coefficient is 0.002, and checkpoints
+are saved every 100 iterations into a new experiment directory. Select by motion
+evaluation, not by the largest checkpoint number. For an interruption of this
+same experiment, resume from its checkpoint **with** `--resume_optimizer_state`.
+
+The Smooth task restores 4999's native reward settings: XY/yaw tracking std 0.5,
+weights 3.0/1.5, action-rate -0.03, leg acceleration -7.5e-7, joint posture -1.0
+with stationary multiplier 5, and stand-still posture -2.0. Its pre-existing
+custom lateral air-time term remains at weight 0.5, threshold 0.3 s and cap 0.5 s.
+Command gates for posture/air-time change from 0.1 to 0.03 so small nonzero
+commands are not treated as standing. The native touchdown-count reward changes
+from 0.1 to disabled; it should not reward stationary contact flicker.
+
+Exactly **two new costs** are enabled, giving 20 active terms in total:
+
+- `joint_target_smoothness`, weight -0.01: second differences of the final clipped
+  leg-position and wheel-velocity targets, normalized separately by 0.05 rad and
+  1 rad/s per nominal 20 ms step. Uniform target ramps have zero curvature;
+  abrupt target acceleration/reversal is penalized. The first two samples after
+  each reset are excluded, independently for every environment.
+- `airborne_wheel_overspeed`, weight -0.25: wheels airborne longer than 0.08 s are
+  penalized for speed above `(abs(vx) + 0.4*abs(wz))/0.088 + 2` rad/s, normalized
+  by 30 rad/s and averaged across wheels. Grounded wheels and short swings are
+  exempt. This uses sustained air time, rather than the native wheel penalty's
+  first-liftoff event. It is a conservative command-based allowance, not a
+  complete wheel-slip model.
+
+Forward/reverse stays ±2 m/s, lateral ±0.3 m/s, yaw ±0.8 rad/s, and mixed targets
+stay within ±(0.5, 0.2, 0.4). Modes stand/forward/lateral/yaw/mixed have probabilities
+10/25/25/20/20%, resampled every 6–9 s; 20% use low-speed ranges ±(0.3, 0.15, 0.3).
+Training uses deployment-matched command ramps. Actuators, motor/joint limits,
+action scales (0.18/0.25 for legs, signed 5 for wheels), and the 57-input/16-output
+policy contract are unchanged. This is a fine-tuning candidate; smoothness and
+tracking still need evaluation together, including low-speed, reverse, lateral,
+yaw, all mixed signs and mode changes. A stationary or saturated failed action
+must not be accepted just because its target differences are small.
+
 The laboratory wheel-leg robot is packaged under
 `source/robot_lab/robot_lab/assets/data/Robots/ice/robocon/`. Its Flat and Rough tasks
 are registered as `RobotLab-Isaac-Velocity-{Flat,Rough}-ICE-Robocon-v0`, with separate
@@ -204,15 +310,114 @@ uv sync --locked --extra importers
 uv run --extra importers isaaclab train --rl_library rsl_rl --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 --num_envs 1024 --viz none physics=newton_mjwarp
 ```
 
-The Flat task trains forward/reverse commands up to 2.0 m/s, with lateral commands
-up to 0.3 m/s and yaw commands up to 0.8 rad/s. To favor slower lateral steps,
-landing rewards penalize swings shorter than 0.30 s and cap credited swing time
-at 0.50 s, only when the lateral command exceeds 0.10 m/s in magnitude. Hip action
-scale is 0.18 (previously 0.125); action-rate and leg-acceleration penalties are
-three times stronger. These are training incentives, not a fixed gait frequency
-or step length. Joint position, torque and speed limits remain the same.
-Start a new training run with the command above to learn the revised action scale
-and rewards; existing checkpoints retain their learned behavior.
+The default Flat task is now a **coordination baseline**, trained from scratch.
+It uses only existing robot_lab / Isaac Lab reward functions. The custom
+`lateral_feet_air_time` and all three stopping costs are disabled. The previous
+aggressive swing-duration and smoothness combination did not pass evaluation;
+changing checkpoints alone is not treated as a solution.
+
+Training is split into two explicitly registered tasks:
+
+| Task suffix | Forward/reverse | Mixed vx / vy / wz | High-speed sampling |
+|-------------|-----------------|--------------------|---------------------|
+| `Robocon-v0` | ±1.5 m/s | ±0.5 / ±0.2 / ±0.4 | Disabled |
+| `Robocon-Speed-v0` | ±2.5 m/s | ±1.5 / ±0.3 / ±0.6 | 10% of forward/reverse targets, magnitude 1.75–2.5 |
+
+Both retain pure lateral commands ±0.3 m/s and pure yaw commands ±0.8 rad/s.
+Mode probabilities are stand 5%, forward/reverse 20%, lateral 30%, turn 20%,
+and mixed 25%. Commands resample every 4–7 seconds; 30% of targets use low-speed
+ranges ±(0.3, 0.12, 0.25), in vx / vy / wz order. The remainder retains the full
+pure-mode or mixed-mode ranges above. Acceleration limits are (1.0, 0.3, 0.8),
+deceleration limits (1.5, 0.5, 1.2).
+Reversals brake through zero and resets clear old commands. Hip/leg action scales
+remain 0.18 / 0.25; motor, effort and joint limits are unchanged. Pure rolling at
+3 m/s is outside the current 0.088 m * 30 rad/s = 2.64 m/s geometric bound, so the
+confirmed final target remains ±2.5 m/s, subject to loaded-performance evaluation.
+
+The revised native coordination baseline uses XY tracking weight 3.0 / std 0.35,
+yaw tracking 1.5 / std 0.4, action-rate penalty -0.025, leg-acceleration penalty
+-5e-7 and wheel-acceleration penalty -2.5e-9. Joint-posture weight is -0.4 with
+standing multiplier 4.0, preserving the previous stationary effective weight
+of -1.6 while allowing more leg motion under nonzero commands. Its command
+threshold remains 0.03; stand-still posture is
+-1.0 with threshold 0.03. `feet_contact_without_cmd` remains disabled because its
+implementation counts new touchdowns rather than sustained support.
+
+Run **stage 1 from scratch** without a checkpoint. Old `4999` is a possible
+initialization control experiment, not a required starting point:
+
+```bash
+cd /home/jasper/robot_lab
+.venv/bin/python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-v0 \
+  --num_envs 1024 --viz none --max_iterations 8000 \
+  --experiment_name ice_robocon_native_coordination_v2 \
+  --run_name scratch_s42 --seed 42 \
+  physics=newton_mjwarp
+```
+
+Defaults for this stage are learning rate 3e-4 and entropy coefficient 0.005.
+The previous scratch run `ice_robocon_native_coordination/2026-11-27_15-29-09_scratch_s42`
+is retained as the v1 control. Its final checkpoint rolled smoothly but failed
+lateral tracking in both Newton and `rl_sar`, and mixed-command evaluation in `rl_sar`.
+This v2 changes native parameters and sampling together; it is a candidate
+configuration, not an isolated causal ablation or a demonstrated gait improvement.
+It adds no reward functions or active reward terms (17 remain enabled). The
+earlier v1 settings can be reproduced with these overrides appended to the same
+task, using a separate experiment name:
+
+```bash
+env.rewards.track_lin_vel_xy_exp.params.std=0.5 \
+env.rewards.track_ang_vel_z_exp.params.std=0.5 \
+env.rewards.action_rate_l2.weight=-0.02 \
+env.rewards.joint_pos_penalty.weight=-0.8 \
+env.rewards.joint_pos_penalty.params.stand_still_scale=2.0 \
+'env.commands.base_velocity.mode_probabilities=[0.05,0.25,0.25,0.25,0.20]' \
+env.commands.base_velocity.low_speed_fraction=0.20 \
+'env.commands.base_velocity.low_speed_ranges.lin_vel_y=[-0.2,0.2]' \
+'env.commands.base_velocity.low_speed_ranges.ang_vel_z=[-0.3,0.3]' \
+agent.algorithm.entropy_coef=0.01
+```
+
+Before stage 2, evaluate both lateral directions, both yaw directions, mixed
+commands, contact/swing timing, joint/wheel target variations and normal state
+transitions in the original runtime and in `rl_sar`. Do not advance solely because
+training finished, reward increased, or the final checkpoint has a larger number.
+Choose a checkpoint that passes these checks, then expand speed:
+
+```bash
+coordination_checkpoint="/absolute/path/to/accepted/stage1/model_XXXX.pt"
+.venv/bin/python scripts/reinforcement_learning/rsl_rl/train.py \
+  --task RobotLab-Isaac-Velocity-Flat-ICE-Robocon-Speed-v0 \
+  --num_envs 1024 --viz none --max_iterations 3000 \
+  --checkpoint "$coordination_checkpoint" --no-resume_optimizer_state \
+  --run_name speed25_s42 --seed 42 \
+  physics=newton_mjwarp
+```
+
+Stage 2 defaults to learning rate 2e-4 and entropy coefficient 0.003. It changes
+command coverage, not reward weights. It is a new training objective range, so a
+fresh optimizer is selected; recovering an interrupted stage uses
+`--resume_optimizer_state` with the same task and settings instead.
+
+For an isolated swing-reward comparison, repeat stage 1 from scratch with the
+same seed and arguments, changing only the task to
+`RobotLab-Isaac-Velocity-Flat-ICE-Robocon-AirTime-v0`, the experiment name to
+`ice_robocon_native_airtime02`, and the run name to `scratch_airtime02_s42`.
+Its only reward difference is the existing lateral air-time term at weight 0.2,
+threshold 0.10 s, cap 0.50 s and lateral command gate 0.03 m/s. All other reward
+and command settings are identical. If this ablation is selected after evaluation,
+use `RobotLab-Isaac-Velocity-Flat-ICE-Robocon-Speed-AirTime-v0` for stage 2 so the
+same reward is retained. Do not claim longer strides just from a longer reward
+threshold; measure the actual gait and tracking.
+
+For MuJoCo validation, `rl_sar` now supports `mujoco_joint_drive: implicit`, matching
+the training actuator's feedback formulation. It evaluates affine PD feedback at
+each physics step and caps the combined force after feedback. Explicit mode remains
+available for comparison and is the fallback for other robot configurations.
+This removes the specific sampled-explicit/implicit drive discrepancy, not every
+possible difference between Newton and native MuJoCo. Training completion alone
+still does not establish acceptable motion quality.
 
 For a server, place the same Isaac Lab v3.0.0 checkout next to `robot_lab`, as described
 in Installation. Use `--num_envs 256` on a smaller GPU and increase it with available

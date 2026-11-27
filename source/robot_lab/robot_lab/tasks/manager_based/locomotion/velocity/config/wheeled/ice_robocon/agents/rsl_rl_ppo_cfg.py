@@ -44,5 +44,46 @@ class IceRoboconRoughPPORunnerCfg(RslRlOnPolicyRunnerCfg):
 class IceRoboconFlatPPORunnerCfg(IceRoboconRoughPPORunnerCfg):
     def __post_init__(self):
         super().__post_init__()
-        self.max_iterations = 5000
+        self.max_iterations = 8000
         self.experiment_name = "ice_robocon_flat"
+        self.algorithm.learning_rate = 3.0e-4
+        self.algorithm.entropy_coef = 0.005
+
+
+@configclass
+class IceRoboconFlatSpeedPPORunnerCfg(IceRoboconFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 3000
+        self.experiment_name = "ice_robocon_flat_speed"
+        self.algorithm.learning_rate = 2.0e-4
+        self.algorithm.entropy_coef = 0.003
+
+
+@configclass
+class IceRoboconFlatAirTimePPORunnerCfg(IceRoboconFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.experiment_name = "ice_robocon_flat_airtime"
+
+
+@configclass
+class IceRoboconFlatSmoothPPORunnerCfg(IceRoboconFlatPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 3000
+        self.experiment_name = "ice_robocon_smooth_from4999"
+        self.algorithm.learning_rate = 5.0e-5
+        self.algorithm.schedule = "fixed"
+        self.algorithm.entropy_coef = 0.002
+        self.algorithm.clip_param = 0.1
+
+
+@configclass
+class IceRoboconFlatSmoothStraightPPORunnerCfg(IceRoboconFlatSmoothPPORunnerCfg):
+    def __post_init__(self):
+        super().__post_init__()
+        self.max_iterations = 2000
+        self.experiment_name = "ice_robocon_smooth_straight_from7998"
+        self.algorithm.learning_rate = 3.0e-5
+        self.algorithm.entropy_coef = 0.001
